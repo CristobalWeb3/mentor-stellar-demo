@@ -21,10 +21,14 @@ function formatearSaldo(saldo) {
 const textoFallaRed =
   "Intenté mirar la red y no me respondió. No es tu cuenta, es la conexión. Vuelve a mandármela en un minuto.";
 
+// Link que abre ESA cuenta en un explorador público de la testnet.
+const linkExplorador = (llave) => `https://stellar.expert/explorer/testnet/account/${llave}`;
+
 // Parte común del mensaje de hito cumplido. La usan cuentaActiva y cuentaActivaRepetida.
-const textoHitoCumplido = (saldo) =>
+const textoHitoCumplido = (saldo, llave) =>
   `¡Lo lograste! Acabo de mirar la testnet y tu cuenta está activa, con ${formatearSaldo(saldo)} XLM de prueba. ` +
-  "No es de palabra: lo verifiqué directamente en la red, y cualquiera puede comprobarlo. Hito 1 cumplido.";
+  "No es de palabra: lo verifiqué directamente en la red, y cualquiera puede comprobarlo. Hito 1 cumplido.\n" +
+  `Compruébalo tú mismo: ${linkExplorador(llave)}`;
 
 export const mensajes = {
   // /start, saludos o cualquier texto que no tenga forma de llave.
@@ -39,11 +43,16 @@ export const mensajes = {
 
   // La cuenta existe y está activa en testnet (saldo leído en vivo de la red).
   // Primera vez: incluye el aviso de que el mentor volverá a escribir.
-  cuentaActiva: (saldo) =>
-    textoHitoCumplido(saldo) + "\n" + "En un rato te vuelvo a escribir con el siguiente paso.",
+  cuentaActiva: (saldo, llave) =>
+    textoHitoCumplido(saldo, llave) + "\n" + "En un rato te vuelvo a escribir con el siguiente paso.",
 
   // Igual que cuentaActiva, pero sin el aviso: para cuando el seguimiento ya está programado o enviado.
-  cuentaActivaRepetida: (saldo) => textoHitoCumplido(saldo),
+  cuentaActivaRepetida: (saldo, llave) => textoHitoCumplido(saldo, llave),
+
+  // La cuenta no existe en testnet, pero sí en la red principal (mainnet). No cuenta como hito.
+  cuentaEnRedPrincipal:
+    "Veo tu cuenta en la red principal de Stellar, pero este hito es en testnet, la red de práctica (gratis, sin dinero real). " +
+    "Crea una cuenta en testnet y pégame esa llave.",
 
   // La red respondió que la cuenta aún no existe / no está activa.
   cuentaNoEncontrada:

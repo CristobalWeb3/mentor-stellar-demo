@@ -1,12 +1,13 @@
 // Bot mentor de Stellar (demo): el alumno pega su llave pública y el bot
 // verifica en vivo, en la testnet (solo lectura), si su cuenta está activa.
+// Si no existe en testnet, mira si existe en la red principal (solo saber si existe) para orientarlo.
 // Sin IA: las respuestas son frases fijas de mensajes.js. No usa base de datos ni archivos:
 // solo recuerda en memoria a qué chats ya les programó el seguimiento (se pierde al reiniciar).
 // Usa long-polling (el bot le pregunta a Telegram si hay mensajes nuevos). Sin webhooks.
 
 import "dotenv/config"; // carga las variables del archivo .env
 import TelegramBot from "node-telegram-bot-api";
-import { verificarCuenta } from "./verificar-cuenta.js";
+import { verificarCuentaConMainnet } from "./verificar-cuenta.js";
 import { mensajes } from "./mensajes.js";
 
 // El token se lee SOLO desde la variable de entorno. Nunca va escrito en el código.
@@ -103,8 +104,11 @@ function respuestaSegunEstado(resultado, chatId) {
     case "ACTIVA":
       // Si este chat ya tiene seguimiento (programado o enviado), no se promete otro.
       return chatsConSeguimiento.has(chatId)
-        ? mensajes.cuentaActivaRepetida(resultado.saldoXLM)
-        : mensajes.cuentaActiva(resultado.saldoXLM);
+        ? mensajes.cuentaActivaRepetida(resultado.saldoXLM, resultado.llave)
+        : mensajes.cuentaActiva(resultado.saldoXLM, resultado.llave);
+    case "SOLO_EN_MAINNET":
+      // Existe en la red principal, no en testnet: no es hito y no se programa seguimiento.
+      return mensajes.cuentaEnRedPrincipal;
     case "NO_ENCONTRADA":
       return mensajes.cuentaNoEncontrada;
     case "INVALIDA":
@@ -131,7 +135,7 @@ bot.on("message", async (msg) => {
   if (pareceLlave) {
     // Parece una llave: leer la testnet en vivo.
     try {
-      const resultado = await verificarCuenta(texto);
+      const resultado = await verificarCuentaConMainnet(texto);
       respuesta = respuestaSegunEstado(resultado, msg.chat.id);
       cuentaActiva = resultado.estado === "ACTIVA";
     } catch (error) {
@@ -145,7 +149,8 @@ bot.on("message", async (msg) => {
   }
 
   try {
-    await bot.sendMessage(msg.chat.id, respuesta);
+    // Sin vista previa: así el link del explorador no abre una tarjeta grande en el chat.
+    await bot.sendMessage(msg.chat.id, respuesta, { disable_web_page_preview: true });
     // Solo si la cuenta está activa Y el mensaje de cuenta activa se envió bien.
     if (cuentaActiva) programarSeguimiento(msg.chat.id);
   } catch (error) {
