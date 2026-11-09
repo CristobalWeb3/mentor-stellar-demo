@@ -1,13 +1,15 @@
 // Bot mentor de Stellar (demo): el alumno pega su llave pública y el bot
 // verifica en vivo, en la testnet (solo lectura), si su cuenta está activa.
 // Si no existe en testnet, mira si existe en la red principal (solo saber si existe) para orientarlo.
-// Sin IA: las respuestas son frases fijas de mensajes.js. No usa base de datos ni archivos:
-// solo recuerda en memoria a qué chats ya les programó el seguimiento (se pierde al reiniciar).
+// Los comandos, las llaves y las fallas se responden con frases fijas de mensajes.js. El resto de la
+// conversación la lleva la IA (mentor-ia.js). No usa base de datos ni archivos: solo recuerda en memoria
+// a qué chats ya les programó el seguimiento y la memoria corta de la IA (se pierde al reiniciar).
 // Usa long-polling (el bot le pregunta a Telegram si hay mensajes nuevos). Sin webhooks.
 
 import "dotenv/config"; // carga las variables del archivo .env
 import TelegramBot from "node-telegram-bot-api";
 import { verificarCuentaConMainnet, extraerLlavePublica } from "./verificar-cuenta.js";
+import { responderConIA, iaDisponible } from "./mentor-ia.js";
 import { mensajes } from "./mensajes.js";
 
 // El token se lee SOLO desde la variable de entorno. Nunca va escrito en el código.
@@ -122,23 +124,70 @@ function respuestaSegunEstado(resultado, chatId) {
   }
 }
 
-bot.on("message", async (msg) => {
-  if (!msg.text) return; // ignora fotos, stickers, etc.: solo mensajes de texto
+// ------------------------------------------------------------
+// Conversación con la IA: "escribiendo..." y una cola por chat
+// ------------------------------------------------------------
 
+// Telegram apaga el aviso "escribiendo..." a los 5 s, así que se repite cada 4 s mientras se espera a la IA.
+const INTERVALO_ESCRIBIENDO_MS = 4 * 1000;
+
+// Muestra "escribiendo..." en el chat y devuelve la función que lo detiene.
+function mostrarEscribiendo(chatId) {
+  const enviar = () => bot.sendChatAction(chatId, "typing").catch(() => {});
+  enviar();
+  const intervalo = setInterval(enviar, INTERVALO_ESCRIBIENDO_MS);
+  return () => clearInterval(intervalo);
+}
+
+// Cola por chat: si llegan dos mensajes seguidos del mismo chat, el segundo espera a que termine
+// el primero. Así la memoria de la IA no se mezcla y las respuestas salen en orden.
+const colasPorChat = new Map();
+function encolarPorChat(chatId, tarea) {
+  const anterior = colasPorChat.get(chatId) ?? Promise.resolve();
+  const siguiente = anterior.then(tarea, tarea);
+  const registrada = siguiente.finally(() => {
+    if (colasPorChat.get(chatId) === registrada) colasPorChat.delete(chatId);
+  });
+  colasPorChat.set(chatId, registrada);
+  return siguiente;
+}
+
+// Forma de llave SECRETA de Stellar: S seguida de 55 caracteres (A-Z y 2-7), en cualquier parte del texto.
+// Solo se mira la forma (sin validar), porque basta con que lo parezca para advertir.
+const FORMA_LLAVE_SECRETA = /S[A-Z2-7]{55}/;
+
+// ------------------------------------------------------------
+// Atención de cada mensaje
+// ------------------------------------------------------------
+
+bot.on("message", (msg) => {
+  if (!msg.text) return; // ignora fotos, stickers, etc.: solo mensajes de texto
+  encolarPorChat(msg.chat.id, () => atenderMensaje(msg));
+});
+
+async function atenderMensaje(msg) {
+  const chatId = msg.chat.id;
   const texto = msg.text.trim();
   let respuesta;
   let cuentaActiva = false; // solo será true si el verificador devolvió "ACTIVA"
 
-  // Busca una llave válida en cualquier parte del mensaje (p. ej. "aquí está mi llave: G...").
+  // Busca una llave pública válida en cualquier parte del mensaje (p. ej. "aquí está mi llave: G...").
   const llave = extraerLlavePublica(texto);
   // Respaldo: el mensaje completo tiene forma de llave (G, 56 caracteres, sin espacios) pero no es válida.
   const pareceLlave = texto.startsWith("G") && texto.length === 56 && !/\s/.test(texto);
 
-  if (llave || pareceLlave) {
-    // Hay una llave (o algo con forma de llave): leer la testnet en vivo.
+  if (texto.startsWith("/")) {
+    // a) /start o cualquier otro comando: bienvenida fija. Sin IA.
+    respuesta = mensajes.bienvenida;
+  } else if (FORMA_LLAVE_SECRETA.test(texto)) {
+    // b) Parece una llave SECRETA: advertencia fija. No se verifica, no va a la IA,
+    //    no entra a la memoria y no se registra nada de su contenido.
+    respuesta = mensajes.llaveSecreta;
+  } else if (llave || pareceLlave) {
+    // c) Hay una llave pública (o algo con forma de llave): leer la testnet en vivo. Sin IA.
     try {
       const resultado = await verificarCuentaConMainnet(llave ?? texto);
-      respuesta = respuestaSegunEstado(resultado, msg.chat.id);
+      respuesta = respuestaSegunEstado(resultado, chatId);
       cuentaActiva = resultado.estado === "ACTIVA";
     } catch (error) {
       // Seguro extra: si algo falla inesperadamente, se trata como falla de red.
@@ -146,19 +195,28 @@ bot.on("message", async (msg) => {
       respuesta = mensajes.fallaRed;
     }
   } else {
-    // No parece una llave: saludo de mentor e invitación a pegarla.
-    respuesta = mensajes.bienvenida;
+    // d) Cualquier otro texto: conversación con la IA. Solo viaja el texto y el estado del hito.
+    const detenerEscribiendo = mostrarEscribiendo(chatId);
+    try {
+      respuesta = await responderConIA(chatId, texto, chatsConSeguimiento.has(chatId), log);
+    } catch (error) {
+      // Seguro extra: responderConIA ya maneja sus fallas, pero nunca se deja al alumno en silencio.
+      log(`IA: error inesperado (${describirError(error)}).`);
+      respuesta = mensajes.fallaIA;
+    } finally {
+      detenerEscribiendo();
+    }
   }
 
   try {
     // Sin vista previa: así el link del explorador no abre una tarjeta grande en el chat.
-    await bot.sendMessage(msg.chat.id, respuesta, { disable_web_page_preview: true });
+    await bot.sendMessage(chatId, respuesta, { disable_web_page_preview: true });
     // Solo si la cuenta está activa Y el mensaje de cuenta activa se envió bien.
-    if (cuentaActiva) programarSeguimiento(msg.chat.id);
+    if (cuentaActiva) programarSeguimiento(chatId);
   } catch (error) {
     console.error("No pude enviar la respuesta:", ocultarToken(error.message));
   }
-});
+}
 
 // ------------------------------------------------------------
 // Estado de la conexión: avisos sin inundar la terminal
@@ -352,6 +410,12 @@ log(
     ? `Seguimiento: ${minutosSeguimiento} minuto(s) (desde SEGUIMIENTO_MINUTOS).`
     : `Seguimiento: ${minutosSeguimiento} minuto(s) (por defecto; SEGUIMIENTO_MINUTOS falta o no es válido).`
 );
+if (!iaDisponible) {
+  log(
+    "AVISO: falta ANTHROPIC_API_KEY en el .env. El bot funciona igual (la verificación no depende de la IA), " +
+      "pero las respuestas de conversación serán el mensaje fijo de falla."
+  );
+}
 iniciarGuardian();
 log(
   `Guardián de conexión activo: revisa cada ${PERIODO_GUARDIAN_MS / 1000} s; tiempo máximo por petición ${TIEMPO_MAXIMO_PETICION_MS / 1000} s.`

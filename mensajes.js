@@ -5,8 +5,8 @@
 // (Aquí no hay lógica: solo frases).
 // ============================================================
 
-// Nombre del mentor. Todo texto que lo nombre usa esta constante.
-const NOMBRE_MENTOR = "[NOMBRE]";
+// Nombre del mentor. Todo texto que lo nombre usa esta constante (también instrucciones-mentor.js).
+export const NOMBRE_MENTOR = "Estela";
 
 // Da formato al saldo para leerlo cómodo, p. ej. "10000.0000000" -> "10.000,00"
 function formatearSaldo(saldo) {
@@ -31,11 +31,23 @@ const textoHitoCumplido = (saldo, llave) =>
   `Compruébalo tú mismo: ${linkExplorador(llave)}`;
 
 export const mensajes = {
-  // /start, saludos o cualquier texto que no tenga forma de llave.
+  // /start o cualquier otro comando que empiece con "/". Sin IA.
   bienvenida:
-    `Hola, soy ${NOMBRE_MENTOR}, tu mentor de Stellar. Terminaste el taller y te voy a acompañar paso a paso: ` +
+    `Hola, soy ${NOMBRE_MENTOR}, tu mentora de Stellar. Terminaste el taller y te voy a acompañar paso a paso: ` +
     "tú avanzas, me lo cuentas aquí, y cada avance lo compruebo en la red. " +
-    "Primer hito: crea tu cuenta en la testnet de Stellar y pégame aquí tu llave pública, la que empieza con G.",
+    "Pero antes de tocar código: cuéntame en una frase qué problema te gustaría resolver, y para quién.",
+
+  // El mensaje trae algo con forma de llave SECRETA (empieza con S). No se verifica ni se envía a la IA.
+  llaveSecreta:
+    "Ojo: eso parece una llave SECRETA. Nunca la compartas con nadie, ni conmigo. Yo solo necesito tu llave pública, la que empieza con G.",
+
+  // Se alcanzó el tope diario de mensajes con la IA (por persona o total).
+  topeAlcanzado:
+    "Por hoy conversamos harto. Si ya tienes tu llave pública, pégala y la verifico; si no, seguimos mañana.",
+
+  // La IA no respondió (error, sin saldo, clave inválida, tiempo agotado o respuesta vacía).
+  fallaIA:
+    "Se me enredó la respuesta. ¿Me lo repites en un rato? Si ya tienes tu llave pública, pégala y la verifico.",
 
   // Tiene forma de llave (G, 56 caracteres), pero no es una llave pública válida.
   noPareceLlave:
