@@ -13,7 +13,11 @@ const HORIZON = {
   testnet: "https://horizon-testnet.stellar.org",
   mainnet: "https://horizon.stellar.org",
 };
-// Tiempo máximo de espera SOLO para la consulta a mainnet (testnet no tiene límite propio).
+// Tiempo máximo de espera para la consulta a testnet. Si se acaba, se trata como falla de red
+// (el bot responde "la red no me respondió", nunca "tu cuenta no existe").
+const TIEMPO_MAXIMO_TESTNET_MS = 10 * 1000;
+// Tiempo máximo de espera para la consulta a mainnet. Es más corto porque mainnet es solo un extra
+// para orientar, y ocurre después de que testnet ya respondió: no vale la pena hacer esperar más al alumno.
 const TIEMPO_MAXIMO_MAINNET_MS = 4 * 1000;
 
 // Verifica una llave pública en la red indicada ("testnet" por defecto, o "mainnet").
@@ -35,18 +39,18 @@ export async function verificarCuenta(llavePublica, red = "testnet") {
   const esMainnet = red === "mainnet";
   const servidor = new Horizon.Server(HORIZON[esMainnet ? "mainnet" : "testnet"]);
 
+  const tiempoMaximoMs = esMainnet ? TIEMPO_MAXIMO_MAINNET_MS : TIEMPO_MAXIMO_TESTNET_MS;
+
   let reloj;
   try {
-    let consulta = servidor.loadAccount(llave);
-    if (esMainnet) {
-      // Reloj propio de 4 s (solo mainnet): si se acaba, se trata como falla y se abandona la consulta.
-      const limite = new Promise((_, rechazar) => {
-        reloj = setTimeout(() => rechazar(new Error("tiempo agotado")), TIEMPO_MAXIMO_MAINNET_MS);
-      });
-      consulta = Promise.race([consulta, limite]);
-      consulta.catch(() => {}); // evita un aviso si la consulta perdedora falla más tarde
-    }
-    const cuenta = await consulta;
+    // Reloj propio: si se acaba antes de que la red responda, se trata como falla de red
+    // y se abandona la consulta. El SDK no pone ningún límite por su cuenta.
+    const consulta = servidor.loadAccount(llave);
+    consulta.catch(() => {}); // evita un aviso si la consulta perdedora falla más tarde
+    const limite = new Promise((_, rechazar) => {
+      reloj = setTimeout(() => rechazar(new Error("tiempo agotado")), tiempoMaximoMs);
+    });
+    const cuenta = await Promise.race([consulta, limite]);
     // En mainnet solo importa que exista: no se lee el saldo ni nada más.
     if (esMainnet) return { estado: "EXISTE", llave };
     const nativo = cuenta.balances.find((b) => b.asset_type === "native");
@@ -67,6 +71,14 @@ export async function verificarCuenta(llavePublica, red = "testnet") {
   } finally {
     clearTimeout(reloj);
   }
+}
+
+// Busca una llave pública de Stellar dentro de un texto cualquiera, p. ej. "aquí está mi llave: G...".
+// Forma de llave: G seguida de 55 caracteres en mayúsculas (A-Z y 2-7). Cada candidata se confirma
+// con la validación oficial del SDK (StrKey). Devuelve la primera válida, o null si no hay ninguna.
+export function extraerLlavePublica(texto) {
+  const candidatas = String(texto ?? "").match(/G[A-Z2-7]{55}/g) ?? [];
+  return candidatas.find((c) => StrKey.isValidEd25519PublicKey(c)) ?? null;
 }
 
 // Verificación completa para el bot: primero testnet. SOLO si testnet dice "no existe" se mira

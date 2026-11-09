@@ -7,7 +7,7 @@
 
 import "dotenv/config"; // carga las variables del archivo .env
 import TelegramBot from "node-telegram-bot-api";
-import { verificarCuentaConMainnet } from "./verificar-cuenta.js";
+import { verificarCuentaConMainnet, extraerLlavePublica } from "./verificar-cuenta.js";
 import { mensajes } from "./mensajes.js";
 
 // El token se lee SOLO desde la variable de entorno. Nunca va escrito en el código.
@@ -129,13 +129,15 @@ bot.on("message", async (msg) => {
   let respuesta;
   let cuentaActiva = false; // solo será true si el verificador devolvió "ACTIVA"
 
-  // "Parece una llave": empieza con G mayúscula, tiene 56 caracteres y no tiene espacios.
+  // Busca una llave válida en cualquier parte del mensaje (p. ej. "aquí está mi llave: G...").
+  const llave = extraerLlavePublica(texto);
+  // Respaldo: el mensaje completo tiene forma de llave (G, 56 caracteres, sin espacios) pero no es válida.
   const pareceLlave = texto.startsWith("G") && texto.length === 56 && !/\s/.test(texto);
 
-  if (pareceLlave) {
-    // Parece una llave: leer la testnet en vivo.
+  if (llave || pareceLlave) {
+    // Hay una llave (o algo con forma de llave): leer la testnet en vivo.
     try {
-      const resultado = await verificarCuentaConMainnet(texto);
+      const resultado = await verificarCuentaConMainnet(llave ?? texto);
       respuesta = respuestaSegunEstado(resultado, msg.chat.id);
       cuentaActiva = resultado.estado === "ACTIVA";
     } catch (error) {
